@@ -1,6 +1,6 @@
 const CACHE_NAME = 'mediatheque-cache-v1';
 const ASSETS_TO_CACHE = [
-  './Mediatheque.html',
+  './index.html',
   './manifest.json',
   'https://cdn.tailwindcss.com',
   'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js',
