@@ -1,0 +1,1463 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Médiathèque Personnelle & Connectée</title>
+    <!-- Chargement de Tailwind CSS pour un style moderne et réactif -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Configuration de la police Inter par défaut */
+        :root {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Masque la barre de défilement pour un look plus propre */
+        .overflow-y-auto::-webkit-scrollbar {
+            width: 6px;
+        }
+        .overflow-y-auto::-webkit-scrollbar-thumb {
+            background-color: #4b5563; /* gray-600 */
+            border-radius: 3px;
+        }
+        
+        /* Styles personnalisés pour le curseur (Range Slider) */
+        input[type="range"] {
+            -webkit-appearance: none; /* Supprime l'apparence par défaut sur WebKit */
+            appearance: none;
+            width: 100%;
+            height: 10px; /* Légèrement plus épais */
+            background: #4b5563; /* gray-600 */
+            border-radius: 5px;
+            margin: 10px 0;
+            cursor: pointer; /* Curseur standard pour la zone de la piste */
+        }
+
+        /* Le "pouce" du curseur */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 28px; /* Légèrement plus grand pour faciliter la prise */
+            height: 28px;
+            background: #3b82f6; /* blue-500 */
+            border-radius: 50%;
+            cursor: grab; /* Curseur "grab" pour le pouce */
+            box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.4); /* Anneau bleu */
+            transition: background 0.15s ease-in-out, transform 0.1s ease-in-out;
+            margin-top: -9px; /* Ajustement vertical */
+        }
+
+        input[type="range"]::-webkit-slider-thumb:active {
+            transform: scale(1.1); /* Petit effet de pression */
+            cursor: grabbing;
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 28px;
+            height: 28px;
+            background: #3b82f6;
+            border-radius: 50%;
+            cursor: grab;
+            box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.4);
+            border: none;
+        }
+        input[type="range"]::-moz-range-thumb:active {
+            cursor: grabbing;
+        }
+        
+    </style>
+<link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#1f2937">
+
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Service Worker enregistré avec succès ! Scope:', reg.scope))
+                    .catch(err => console.warn('Échec de l\'enregistrement du Service Worker:', err));
+            });
+        }
+    </script>
+</head>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col justify-between">
+    <div id="app" class="p-4 sm:p-8 font-sans max-w-7xl mx-auto w-full">
+        <!-- Le contenu de l'application sera injecté ici -->
+    </div>
+
+    <!-- Firebase SDK Modules nécessaires -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInWithEmailAndPassword, 
+            createUserWithEmailAndPassword, 
+            signOut, 
+            onAuthStateChanged,
+            signInWithCustomToken
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            doc, 
+            setDoc, 
+            addDoc,
+            deleteDoc,
+            onSnapshot 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // =================================================================
+        // CONFIGURATION ET INITIALISATION FIREBASE
+        // =================================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyBgmO81MNUQLZ4gVF-LTkxaeqBpn_TN65I",
+            authDomain: "mediatheque-2c7f2.firebaseapp.com",
+            projectId: "mediatheque-2c7f2",
+            storageBucket: "mediatheque-2c7f2.firebasestorage.app",
+            messagingSenderId: "518662672352",
+            appId: "1:518662672352:web:8a7c3349668a212ec2e585",
+            measurementId: "G-Z84MXDHHZC"
+        };
+
+        // ID Unique verrouillé pour correspondre exactement à votre base de données Firestore réelle
+        const appId = 'c_4c0ae800de8b6077_index.html-996'; 
+        console.log("Médiathèque Connectée - ID Application configuré :", appId);
+
+        // Initialisation de Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // =================================================================
+        // 1. GESTION DE L'ÉTAT (State Management)
+        // =================================================================
+        let state = {
+            user: null,             // Stocke l'utilisateur Firebase connecté
+            authMode: 'login',      // 'login' ou 'signup'
+            authError: null,        // Erreurs d'authentification
+            isAuthLoading: true,    // En cours de vérification de session auth
+
+            movies: [],             // Données récupérées depuis Firebase
+            error: null,
+            isLoading: false,
+            isImporting: false,     // En cours de traitement de l'importation
+            selectedMedia: null,    // 'DVD', 'CD', 'BD'
+            selectedGenre: 'Tous',
+            selectedMovie: null,    // Pour la modale de détails
+            searchTerm: '',
+            availableGenres: ['Tous'],
+            availableYears: [],     // Liste des années uniques disponibles
+            selectedYear: null,     // L'année sélectionnée par le curseur
+            isCollectionView: false,// Bascule vers la vue Collections
+            isYearView: false,      // Bascule vers la vue Années
+            selectedCollection: null, // Pour afficher le contenu d'une collection
+
+            // Gestion de l'UI personnalisée (Zéro alert/confirm d'iframe)
+            toast: null,            // { message: "...", type: "success" | "error" | "info" }
+            confirmModal: null      // { title: "...", message: "...", onConfirm: () => {} }
+        };
+
+        const appRoot = document.getElementById('app');
+        let firestoreUnsubscribe = null; // Pour stocker le désabonnement aux flux temps réel
+
+        /**
+         * Met à jour l'état et redessine l'application.
+         * @param {Object} newState - Nouvelles propriétés de l'état.
+         */
+        function setState(newState) {
+            state = { ...state, ...newState };
+            renderApp();
+        }
+
+        /**
+         * Affiche un toast de notification personnalisé
+         */
+        function showToast(message, type = 'success') {
+            setState({ toast: { message, type } });
+            setTimeout(() => {
+                if (state.toast && state.toast.message === message) {
+                    setState({ toast: null });
+                }
+            }, 5000);
+        }
+
+        /**
+         * Ouvre une boîte de dialogue de confirmation personnalisée
+         */
+        function showConfirm(title, message, onConfirm) {
+            setState({
+                confirmModal: {
+                    title,
+                    message,
+                    onConfirm: () => {
+                        onConfirm();
+                        setState({ confirmModal: null });
+                    }
+                }
+            });
+        }
+
+        // =================================================================
+        // 2. INITIALISATION ET AUTHENTIFICATION (RÈGLE 3)
+        // =================================================================
+        
+        // Processus d'authentification au démarrage
+        async function initAuthentication() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    try {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } catch (tokenError) {
+                        console.warn("Échec d'authentification via token :", tokenError);
+                    }
+                }
+            } catch (error) {
+                console.error("Erreur d'authentification initiale :", error);
+            }
+        }
+
+        // Écoute de l'état de l'authentification
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                setState({ user, isAuthLoading: false, authError: null });
+                // S'abonner directement aux données du média s'il est déjà sélectionné
+                if (state.selectedMedia) {
+                    subscribeToUserMedia();
+                }
+            } else {
+                if (firestoreUnsubscribe) {
+                    firestoreUnsubscribe();
+                    firestoreUnsubscribe = null;
+                }
+                setState({ user: null, movies: [], isAuthLoading: false });
+            }
+        });
+
+        // =================================================================
+        // 3. SYNCHRONISATION AVEC FIRESTORE (RÈGLE 1 & RÈGLE 3)
+        // =================================================================
+
+        /**
+         * S'abonne aux modifications en temps réel de la collection de médias de l'utilisateur
+         */
+        function subscribeToUserMedia() {
+            // Sécurité stricte (Règle 3) : Ne pas exécuter de requête si non authentifié
+            if (!state.user || !state.selectedMedia) return;
+
+            if (firestoreUnsubscribe) {
+                firestoreUnsubscribe();
+            }
+
+            // Structure de chemin stricte (Règle 1)
+            const mediaCollectionRef = collection(db, 'artifacts', appId, 'users', state.user.uid, state.selectedMedia);
+
+            state.isLoading = true;
+
+            firestoreUnsubscribe = onSnapshot(mediaCollectionRef, (snapshot) => {
+                const loadedMovies = [];
+                snapshot.forEach((doc) => {
+                    loadedMovies.push({ id: doc.id, ...doc.data() });
+                });
+
+                const newAvailableGenres = calculateAvailableGenres(loadedMovies);
+                const newAvailableYears = calculateAvailableYears(loadedMovies);
+                
+                let activeYear = state.selectedYear;
+                if (!activeYear && newAvailableYears.length > 0) {
+                    activeYear = newAvailableYears[0];
+                }
+
+                setState({ 
+                    movies: loadedMovies, 
+                    availableGenres: newAvailableGenres, 
+                    availableYears: newAvailableYears,
+                    selectedYear: activeYear,
+                    isLoading: false,
+                    error: null // Effacer les erreurs de permissions si la lecture réussit
+                });
+            }, (error) => {
+                console.error("Erreur de lecture Firestore : ", error);
+                // Affiche l'erreur explicite et détaillée renvoyée par Firebase
+                setState({ error: "Erreur de synchronisation Firestore : " + error.message, isLoading: false });
+            });
+        }
+
+        /**
+         * Enregistre ou met à jour un média individuel dans Firestore
+         * (Évite les doublons et modifie l'existant s'il a changé)
+         */
+        async function saveOrUpdateMediaToFirestore(mediaItem, mediaType) {
+            if (!state.user) return null;
+            try {
+                const targetTitle = (mediaItem.title || "").trim();
+                if (!targetTitle) return null;
+
+                // Chercher si un média avec le même titre existe déjà localement
+                const existing = state.movies.find(m => (m.title || "").toLowerCase().trim() === targetTitle.toLowerCase());
+
+                const itemData = {
+                    title: targetTitle,
+                    year: mediaItem.year || "",
+                    genres: mediaItem.genres || "",
+                    posterUrl: mediaItem.posterUrl || "",
+                    director: mediaItem.director || "",
+                    actors: mediaItem.actors || "",
+                    synopsis: mediaItem.synopsis || "",
+                    updatedAt: new Date().toISOString()
+                };
+
+                if (existing) {
+                    // Vérifier si des informations ont changé pour éviter d'écrire inutilement
+                    const hasChanged = 
+                        existing.year !== itemData.year ||
+                        existing.genres !== itemData.genres ||
+                        existing.posterUrl !== itemData.posterUrl ||
+                        existing.director !== itemData.director ||
+                        existing.actors !== itemData.actors ||
+                        existing.synopsis !== itemData.synopsis;
+
+                    if (hasChanged) {
+                        // Mise à jour de l'élément existant dans Firestore
+                        const docRef = doc(db, 'artifacts', appId, 'users', state.user.uid, mediaType, existing.id);
+                        await setDoc(docRef, itemData, { merge: true });
+                        return 'updated';
+                    }
+                    return 'no_change';
+                } else {
+                    // Création d'un nouvel élément s'il n'existe pas via addDoc
+                    const collectionRef = collection(db, 'artifacts', appId, 'users', state.user.uid, mediaType);
+                    await addDoc(collectionRef, itemData);
+                    return 'added';
+                }
+            } catch (err) {
+                console.error("Erreur lors de l'enregistrement ou de la mise à jour de l'élément :", err);
+                throw err; // Propage l'erreur vers handleFileUpload
+            }
+        }
+
+        /**
+         * Supprime un média de Firestore
+         */
+        async function deleteMediaFromFirestore(mediaId) {
+            if (!state.user || !state.selectedMedia) return;
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'users', state.user.uid, state.selectedMedia, mediaId);
+                await deleteDoc(docRef);
+                setState({ selectedMovie: null }); // Fermer la modale
+                showToast("Élément supprimé avec succès.", "success");
+            } catch (err) {
+                console.error("Erreur de suppression :", err);
+                showToast("Erreur lors de la suppression.", "error");
+            }
+        }
+
+
+        // =================================================================
+        // 4. LOGIQUE DE PARSING ET DE FILTRAGE
+        // =================================================================
+
+        /**
+         * Fonction de parsing CSV adaptée.
+         * @param {string} csvText - Contenu brut du CSV.
+         * @returns {Array<Object>} Liste des objets films.
+         */
+        function parseCSV(csvText) {
+            const lines = csvText.split('\n').filter(line => line.trim() !== '');
+            if (lines.length === 0) return [];
+
+            const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/ /g, '_'));
+
+            const movies = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/^"(.*)"$/, '$1'));
+
+                if (values.length === headers.length) {
+                    let movie = {};
+                    headers.forEach((header, index) => {
+                        const key = header === 'release_date' ? 'year' : header;
+
+                        if (index === 0) movie.title = values[index];
+                        else if (key === 'sous_genre') movie.genres = values[index];
+                        else if (key === 'affiche') movie.posterUrl = values[index];
+                        else if (key === 'studio_or_director') movie.director = values[index];
+                        else if (key === 'actors_or_animation') movie.actors = values[index]; 
+                        else if (key === 'synopsis') movie.synopsis = values[index];
+                        else movie[key] = values[index];
+                    });
+                    movies.push(movie);
+                }
+            }
+            return movies;
+        }
+
+        function calculateAvailableYears(movies) {
+            const yearsSet = new Set();
+            movies.forEach(movie => {
+                if (movie && movie.year) {
+                    const year = parseInt(movie.year, 10);
+                    if (!isNaN(year) && year >= 1888 && year <= new Date().getFullYear() + 1) {
+                        yearsSet.add(year);
+                    }
+                }
+            });
+            return Array.from(yearsSet).sort((a, b) => a - b);
+        }
+
+        function calculateAvailableGenres(movies) {
+            const genresSet = new Set();
+            movies.forEach(movie => {
+                if (movie && typeof movie.genres === 'string') {
+                    movie.genres.split(/[-,\/]/).forEach(genre => {
+                        const trimmedGenre = genre.trim();
+                        if (trimmedGenre) {
+                            genresSet.add(trimmedGenre);
+                        }
+                    });
+                }
+            });
+            return ['Tous', ...Array.from(genresSet).sort()];
+        }
+        
+        function getFilteredMovies(movies) {
+            const { searchTerm, selectedGenre, isYearView, selectedYear } = state;
+            const lowerCaseSearchTerm = searchTerm.toLowerCase();
+
+            return movies.filter(movie => {
+                
+                // 1. Filtrage par Année
+                if (isYearView && selectedYear !== null) {
+                    const movieYear = parseInt(movie.year, 10);
+                    if (movieYear !== selectedYear) return false;
+                }
+
+                // 2. Filtrage par Genre
+                if (!isYearView) {
+                    const genreMatch = selectedGenre === 'Tous' || 
+                                    (movie.genres && movie.genres.split(/[-,\/]/).map(g => g.trim()).includes(selectedGenre));
+                    if (!genreMatch) return false;
+                }
+                
+                // 3. Filtrage par Recherche
+                if (!isYearView && lowerCaseSearchTerm !== '') {
+                    const searchableFields = [
+                        movie.title, 
+                        movie.director, 
+                        movie.actors, 
+                        movie.synopsis
+                    ].filter(Boolean).map(s => String(s).toLowerCase());
+                    
+                    if (!searchableFields.some(field => field.includes(lowerCaseSearchTerm))) return false;
+                }
+
+                return true;
+            });
+        }
+        
+        function groupMoviesIntoCollections(movies) {
+            const potentialCollections = {};
+            const individuals = [];
+            const regex = /^(.*?)\s+([\dIVX]+)$/i; 
+
+            movies.forEach(movie => {
+                const title = movie.title.trim();
+                const match = title.match(regex);
+                
+                if (match) {
+                    const collectionName = match[1].trim();
+                    if (!potentialCollections[collectionName]) {
+                        potentialCollections[collectionName] = [];
+                    }
+                    potentialCollections[collectionName].push(movie);
+                } else {
+                    individuals.push(movie);
+                }
+            });
+
+            const collections = {};
+            Object.keys(potentialCollections).forEach(name => {
+                const moviesInCollection = potentialCollections[name];
+                if (moviesInCollection.length > 1) {
+                    collections[name] = moviesInCollection.sort((a, b) => {
+                        const yearA = parseInt(a.year, 10) || Infinity;
+                        const yearB = parseInt(b.year, 10) || Infinity;
+                        return yearA - yearB;
+                    });
+                } else {
+                    individuals.push(moviesInCollection[0]);
+                }
+            });
+            
+            return { collections, individuals };
+        }
+
+
+        // =================================================================
+        // 5. GESTION DES ÉVÉNEMENTS & COMPTES
+        // =================================================================
+
+        async function handleSignUp(email, password) {
+            setState({ isAuthLoading: true, authError: null });
+            try {
+                await createUserWithEmailAndPassword(auth, email, password);
+                showToast("Compte créé avec succès !", "success");
+            } catch (err) {
+                console.error(err);
+                let message = "Erreur de création de compte.";
+                if (err.code === 'auth/email-already-in-use') message = "Cette adresse email est déjà utilisée.";
+                if (err.code === 'auth/weak-password') message = "Le mot de passe doit faire au moins 6 caractères.";
+                if (err.code === 'auth/invalid-email') message = "Format de courriel invalide.";
+                setState({ authError: message, isAuthLoading: false });
+                showToast(message, "error");
+            }
+        }
+
+        async function handleLogin(email, password) {
+            setState({ isAuthLoading: true, authError: null });
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                showToast("Heureux de vous revoir !", "success");
+            } catch (err) {
+                console.error(err);
+                let message = "Identifiants invalides ou erreur de connexion.";
+                if (err.code === 'auth/invalid-credential') message = "Email ou mot de passe incorrect.";
+                if (err.code === 'auth/user-not-found') message = "Aucun utilisateur trouvé.";
+                if (err.code === 'auth/wrong-password') message = "Mot de passe incorrect.";
+                setState({ authError: message, isAuthLoading: false });
+                showToast(message, "error");
+            }
+        }
+
+        async function handleLogout() {
+            try {
+                await signOut(auth);
+                showToast("Déconnexion réussie.", "info");
+            } catch (err) {
+                console.error("Erreur de déconnexion", err);
+            }
+        }
+
+        /**
+         * Gère le téléchargement, le parsing et l'enregistrement dans Firebase.
+         */
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (file.name.slice(-4).toLowerCase() !== '.csv') {
+                setState({ error: "Veuillez sélectionner un fichier au format .csv." });
+                return;
+            }
+
+            setState({ 
+                isImporting: true, 
+                error: null, 
+                isCollectionView: false, 
+                isYearView: false,
+                selectedCollection: null 
+            });
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                let csvText;
+                
+                try {
+                    const decoderUtf8 = new TextDecoder('utf-8', { fatal: true });
+                    csvText = decoderUtf8.decode(arrayBuffer);
+                } catch (e) {
+                    const decoderIso = new TextDecoder('iso-8859-1'); 
+                    csvText = decoderIso.decode(arrayBuffer);
+                }
+                
+                const parsedMovies = parseCSV(csvText);
+
+                if (parsedMovies.length === 0) {
+                    throw new Error("Aucune ligne de média valide n'a été détectée.");
+                }
+
+                // Enregistrer ou mettre à jour chaque élément dans Firestore
+                let addedCount = 0;
+                let updatedCount = 0;
+                let ignoredCount = 0;
+
+                for (let i = 0; i < parsedMovies.length; i++) {
+                    const result = await saveOrUpdateMediaToFirestore(parsedMovies[i], state.selectedMedia);
+                    if (result === 'added') addedCount++;
+                    else if (result === 'updated') updatedCount++;
+                    else ignoredCount++;
+                }
+
+                setState({ isImporting: false, error: null });
+                showToast(`Importation : ${addedCount} ajoutés, ${updatedCount} mis à jour.`, "success");
+
+            } catch (e) {
+                console.error("Erreur d'importation :", e);
+                setState({ 
+                    error: "Erreur lors de l'enregistrement. Vérifiez vos règles de base de données Firestore ou le format CSV.",
+                    isImporting: false 
+                });
+                showToast("Échec de l'importation.", "error");
+            }
+        }
+
+        // =================================================================
+        // 6. RENDU DES COMPOSANTS
+        // =================================================================
+
+        /**
+         * Composant Curseur d'Année.
+         */
+        function YearSlider() {
+            const { availableYears, selectedYear } = state;
+            
+            if (availableYears.length === 0) return null;
+            
+            const currentIndex = availableYears.indexOf(selectedYear);
+            const maxIndex = availableYears.length - 1;
+            
+            const container = document.createElement('div');
+            container.className = "p-6 bg-gray-800 rounded-xl mb-6 shadow-xl border border-gray-700";
+            
+            const sliderWrapper = document.createElement('div');
+            sliderWrapper.className = "relative flex flex-col items-center justify-center";
+
+            const yearDisplay = document.createElement('h3');
+            yearDisplay.className = "text-3xl font-extrabold text-blue-400 mb-4 h-9";
+            yearDisplay.textContent = `Année de sortie : ${selectedYear || 'Non sélectionnée'}`;
+            sliderWrapper.appendChild(yearDisplay);
+
+            const rangeInput = document.createElement('input');
+            rangeInput.type = 'range';
+            rangeInput.min = 0;
+            rangeInput.max = maxIndex;
+            rangeInput.value = currentIndex >= 0 ? currentIndex : 0;
+            
+            rangeInput.addEventListener('input', (e) => {
+                const index = parseInt(e.target.value, 10);
+                const newYear = availableYears[index];
+                yearDisplay.textContent = `Année de sortie : ${newYear}`;
+            });
+
+            const onYearRelease = (e) => {
+                const index = parseInt(e.target.value, 10);
+                const newYear = availableYears[index];
+                if (newYear !== state.selectedYear) {
+                    setState({ selectedYear: newYear });
+                }
+            };
+
+            rangeInput.addEventListener('change', onYearRelease);
+            rangeInput.addEventListener('touchend', onYearRelease);
+            
+            sliderWrapper.appendChild(rangeInput);
+            
+            const labelsDiv = document.createElement('div');
+            labelsDiv.className = "flex justify-between w-full text-sm text-gray-400 mt-1";
+            labelsDiv.innerHTML = `
+                <span>${availableYears[0]} (Première)</span>
+                <span>${availableYears[maxIndex]} (Plus Récente)</span>
+            `;
+            sliderWrapper.appendChild(labelsDiv);
+
+            container.appendChild(sliderWrapper);
+            return container;
+        }
+
+
+        /**
+         * Composant Modale de Détails du Film.
+         */
+        function MovieDetailModal() {
+            const movie = state.selectedMovie;
+            if (movie === null) return null;
+
+            const isBD = state.selectedMedia === 'BD';
+            
+            const title = movie.title || 'Titre Inconnu';
+            const directorLabel = isBD ? 'Auteur / Studio' : 'Réalisateur / Studio';
+            const director = movie.director || 'N/A';
+            const year = movie.year || 'N/A';
+            const genres = movie.genres || 'Inconnu';
+            const actorsLabel = isBD ? 'Dessinateur / Autres contributeurs' : 'Acteurs / Animation';
+            const actors = movie.actors || 'N/A';
+            const synopsis = movie.synopsis || 'Synopsis non disponible.';
+            const posterUrl = movie.posterUrl || '';
+            
+            const modal = document.createElement('div');
+            modal.id = "movieDetailModalOverlay";
+            modal.className = "fixed inset-0 bg-gray-955 bg-opacity-80 flex items-center justify-center z-50 p-4 transition-opacity duration-300";
+            
+            modal.addEventListener('click', () => setState({ selectedMovie: null }));
+
+            const content = document.createElement('div');
+            content.className = "bg-white text-gray-800 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto transform scale-100 transition-transform duration-300 relative border border-gray-200";
+            content.addEventListener('click', (e) => e.stopPropagation());
+
+            content.innerHTML = `
+                <!-- Bouton de fermeture (Croix) -->
+                <button id="closeModal" 
+                    class="absolute top-3 right-3 p-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-full transition duration-150 z-10 shadow-lg"
+                    aria-label="Fermer">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+
+                <div class="flex flex-col md:flex-row">
+                    <!-- Section Affiche -->
+                    <div class="md:w-1/3 flex-shrink-0 bg-gray-900 p-6 rounded-t-xl md:rounded-l-xl md:rounded-t-none flex flex-col justify-between items-center gap-4">
+                        <img 
+                            src="${posterUrl}" 
+                            alt="Affiche de ${title}" 
+                            class="w-full h-full rounded-lg shadow-xl aspect-[2/3] object-cover" 
+                            onerror="this.onerror=null;this.src='https://placehold.co/200x300/1e293b/ffffff?text=Image+Manquante';"
+                        />
+                        <!-- Action de Suppression -->
+                        <button id="deleteMediaBtn" class="w-full mt-4 bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-150 flex items-center justify-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Supprimer
+                        </button>
+                    </div>
+                    
+                    <!-- Section Détails -->
+                    <div class="md:w-2/3 p-6 md:p-8 flex flex-col justify-between">
+                        <div>
+                            <h2 class="text-3xl font-extrabold text-blue-600 mb-2">${title}</h2>
+                            <p class="text-xl font-medium text-gray-500 mb-4">
+                                ${director} (${year})
+                            </p>
+                            
+                            <div class="space-y-4 mb-6 text-sm">
+                                <div>
+                                    <strong class="block text-gray-900">${directorLabel} :</strong>
+                                    <span class="text-gray-600">${director}</span>
+                                </div>
+                                <div>
+                                    <strong class="block text-gray-900">Genre(s) :</strong>
+                                    <span class="text-gray-600">${genres}</span>
+                                </div>
+                                <div>
+                                    <strong class="block text-gray-900">Synopsis :</strong>
+                                    <p class="text-gray-600 mt-1 leading-relaxed">${synopsis}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            modal.appendChild(content);
+
+            // Attacher les écouteurs d'événements
+            const closeModalButton = content.querySelector('#closeModal');
+            if (closeModalButton) {
+                closeModalButton.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    setState({ selectedMovie: null });
+                });
+            }
+
+            const deleteBtn = content.querySelector('#deleteMediaBtn');
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    showConfirm(
+                        "Suppression de média",
+                        `Voulez-vous vraiment retirer "${title}" de votre catalogue cloud de manière définitive ?`,
+                        () => {
+                            deleteMediaFromFirestore(movie.id);
+                        }
+                    );
+                });
+            }
+
+            return modal;
+        }
+
+
+        /**
+         * Composant Carte de Film.
+         */
+        function MovieCard(movie) {
+            const title = movie.title || 'Titre Inconnu';
+            const year = movie.year || 'N/A';
+            const posterUrl = movie.posterUrl || 'https://placehold.co/200x300/1e293b/ffffff?text=Image+Manquante';
+
+            const card = document.createElement('div');
+            card.className = "group relative w-full aspect-[2/3] rounded-lg overflow-hidden shadow-xl bg-gray-900 transform hover:scale-[1.03] transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-blue-500";
+            
+            card.addEventListener('click', () => setState({ selectedMovie: movie }));
+
+            card.innerHTML = `
+                <!-- Affiche du Film -->
+                <img 
+                    src="${posterUrl}" 
+                    alt="Affiche de ${title}" 
+                    class="w-full h-full object-cover"
+                    onerror="this.onerror=null;this.src='https://placehold.co/200x300/1e293b/ffffff?text=Image+Manquante';"
+                />
+                
+                <!-- Overlay pour le Titre et l'Année -->
+                <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent flex items-end p-3">
+                    <div class="text-white w-full">
+                        <h3 class="text-md font-bold leading-tight line-clamp-2">${title}</h3>
+                        <span class="text-xs font-light text-gray-400">${year}</span>
+                    </div>
+                </div>
+            `;
+            
+            return card;
+        }
+        
+        /**
+         * Composant Carte de Collection.
+         */
+        function CollectionCard(collectionName, movies) {
+            const firstMovie = movies[0];
+            const posterUrl = firstMovie.posterUrl || 'https://placehold.co/200x300/1e293b/ffffff?text=Collection';
+            const count = movies.length;
+            const yearRange = `${movies[0].year} - ${movies[count - 1].year}`;
+
+            const card = document.createElement('div');
+            card.className = "group relative w-full aspect-[2/3] rounded-lg overflow-hidden shadow-xl bg-gray-900 transform hover:scale-[1.03] transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-blue-500";
+            
+            card.addEventListener('click', () => setState({ 
+                selectedCollection: { name: collectionName, movies: movies },
+                isCollectionView: true,
+                isYearView: false 
+            }));
+
+            card.innerHTML = `
+                <img 
+                    src="${posterUrl}" 
+                    alt="Affiche de la collection ${collectionName}" 
+                    class="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition duration-300"
+                    onerror="this.onerror=null;this.src='https://placehold.co/200x300/1e293b/ffffff?text=Collection';"
+                />
+                
+                <!-- Overlay pour le Nom et le Compteur -->
+                <div class="absolute inset-0 bg-gradient-to-t from-black/95 to-transparent flex flex-col justify-end p-3">
+                    <div class="text-white">
+                        <h3 class="text-lg font-extrabold leading-tight line-clamp-2">${collectionName}</h3>
+                        <span class="text-xs font-light text-gray-300">${count} films | ${yearRange}</span>
+                        <div class="mt-2 inline-block px-2.5 py-1 bg-blue-600 text-[10px] font-bold rounded-full tracking-wider uppercase">
+                           Voir Collection
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return card;
+        }
+
+
+        /**
+         * Composant du sélecteur de média (BD, CD, DVD).
+         */
+        function MediaSelector() {
+            const container = document.createElement('div');
+            container.className = "flex justify-center space-x-4 mb-8";
+
+            ['BD', 'CD', 'DVD'].forEach(media => {
+                const button = document.createElement('button');
+                button.textContent = media;
+                button.className = `px-6 py-3 rounded-full font-semibold transition-all duration-200 shadow-lg 
+                    ${state.selectedMedia === media 
+                      ? 'bg-blue-600 text-white hover:bg-blue-700 ring-4 ring-blue-500/30' 
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-600'
+                    }`;
+                
+                button.addEventListener('click', () => {
+                    setState({
+                        selectedMedia: media,
+                        movies: [],
+                        selectedGenre: 'Tous',
+                        searchTerm: '',
+                        error: null,
+                        isCollectionView: false, 
+                        isYearView: false,
+                        selectedCollection: null,
+                        selectedYear: null,
+                        availableYears: []
+                    });
+                    subscribeToUserMedia();
+                });
+                container.appendChild(button);
+            });
+            
+            return container;
+        }
+
+        /**
+         * Composant Page de Connexion / Inscription Dédiée
+         */
+        function AuthPage() {
+            const container = document.createElement('div');
+            container.className = "min-h-[80vh] flex flex-col items-center justify-center p-4 animate-fade-in";
+
+            const card = document.createElement('div');
+            card.className = "bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700 w-full max-w-md";
+
+            const title = document.createElement('h2');
+            title.className = "text-3xl font-extrabold text-white text-center mb-2";
+            title.textContent = state.authMode === 'login' ? 'Connexion Cloud' : 'Créer un compte';
+            card.appendChild(title);
+
+            const subtitle = document.createElement('p');
+            subtitle.className = "text-center text-gray-400 text-sm mb-6";
+            subtitle.textContent = "Connectez-vous pour charger automatiquement vos films sauvegardés.";
+            card.appendChild(subtitle);
+
+            if (state.authError) {
+                const errorAlert = document.createElement('div');
+                errorAlert.className = "bg-red-900/50 border border-red-500 text-red-200 p-3 rounded-lg text-sm mb-4 text-center";
+                errorAlert.textContent = state.authError;
+                card.appendChild(errorAlert);
+            }
+
+            const form = document.createElement('form');
+            form.className = "space-y-4";
+            form.innerHTML = `
+                <div>
+                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Adresse Email</label>
+                    <input type="email" id="authEmail" required class="w-full bg-gray-700 text-white rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="vous@exemple.com">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Mot de passe</label>
+                    <input type="password" id="authPassword" required minlength="6" class="w-full bg-gray-700 text-white rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••">
+                </div>
+                <button type="submit" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-200 shadow-md">
+                    ${state.authMode === 'login' ? 'Se connecter' : "S'inscrire"}
+                </button>
+            `;
+
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const email = form.querySelector('#authEmail').value;
+                const password = form.querySelector('#authPassword').value;
+                if (state.authMode === 'login') {
+                    handleLogin(email, password);
+                } else {
+                    handleSignUp(email, password);
+                }
+            });
+
+            card.appendChild(form);
+
+            const toggleWrapper = document.createElement('div');
+            toggleWrapper.className = "mt-6 text-center text-xs text-gray-400";
+            toggleWrapper.innerHTML = state.authMode === 'login' 
+                ? `Pas de compte ? <button class="text-blue-400 font-semibold hover:underline" id="toggleAuthMode">Inscrivez-vous</button>`
+                : `Déjà membre ? <button class="text-blue-400 font-semibold hover:underline" id="toggleAuthMode">Se connecter</button>`;
+            
+            toggleWrapper.querySelector('#toggleAuthMode').addEventListener('click', () => {
+                setState({ 
+                    authMode: state.authMode === 'login' ? 'signup' : 'login',
+                    authError: null 
+                });
+            });
+
+            card.appendChild(toggleWrapper);
+            container.appendChild(card);
+            return container;
+        }
+
+        /**
+         * Boîte de Dialogue de confirmation de suppression (Personnalisée pour iframes)
+         */
+        function ConfirmModalComponent() {
+            if (!state.confirmModal) return null;
+            const { title, message, onConfirm } = state.confirmModal;
+            
+            const overlay = document.createElement('div');
+            overlay.className = "fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4 animate-fade-in";
+            
+            const card = document.createElement('div');
+            card.className = "bg-gray-800 border border-gray-700 p-6 rounded-xl max-w-sm w-full text-white shadow-2xl";
+            card.innerHTML = `
+                <h3 class="text-xl font-bold mb-2 text-red-400">${title}</h3>
+                <p class="text-sm text-gray-300 mb-6 leading-relaxed">${message}</p>
+                <div class="flex justify-end gap-3">
+                    <button id="cancelConfirmBtn" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-semibold transition">
+                        Annuler
+                    </button>
+                    <button id="okConfirmBtn" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-semibold text-white transition">
+                        Confirmer la suppression
+                    </button>
+                </div>
+            `;
+            
+            card.querySelector('#cancelConfirmBtn').addEventListener('click', () => {
+                setState({ confirmModal: null });
+            });
+            
+            card.querySelector('#okConfirmBtn').addEventListener('click', () => {
+                onConfirm();
+            });
+            
+            overlay.appendChild(card);
+            return overlay;
+        }
+
+        /**
+         * Notification Toast de haut d'écran
+         */
+        function ToastComponent() {
+            if (!state.toast) return null;
+            const { message, type } = state.toast;
+            const toastEl = document.createElement('div');
+            toastEl.className = `fixed bottom-5 right-5 px-6 py-3 rounded-xl shadow-2xl z-50 text-white font-medium flex items-center gap-2 border ${
+                type === 'success' ? 'bg-green-600 border-green-500' : type === 'error' ? 'bg-red-600 border-red-500' : 'bg-blue-600 border-blue-500'
+            }`;
+            toastEl.innerHTML = `<span>${message}</span>`;
+            return toastEl;
+        }
+
+        // =================================================================
+        // 7. FONCTION DE RENDU PRINCIPALE
+        // =================================================================
+
+        function renderApp() {
+            appRoot.innerHTML = '';
+            
+            // --- ÉCRAN DE CHARGEMENT INITIAL (Vérification Auth) ---
+            if (state.isAuthLoading) {
+                const loader = document.createElement('div');
+                loader.className = "min-h-[80vh] flex flex-col items-center justify-center";
+                loader.innerHTML = `
+                    <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+                    <p class="text-gray-400">Vérification de la session Médiathèque Cloud...</p>
+                `;
+                appRoot.appendChild(loader);
+                return;
+            }
+
+            // --- ÉCRAN DE CONNEXION / INSCRIPTION SÉCURISÉ ---
+            if (!state.user) {
+                appRoot.appendChild(AuthPage());
+                return;
+            }
+
+            // --- BARRE DE NAVIGATION EN-TÊTE COMPTEUR & CONNECTÉ ---
+            const userNav = document.createElement('div');
+            userNav.className = "flex flex-col sm:flex-row justify-between items-center bg-gray-800 p-4 rounded-xl border border-gray-700 mb-8 gap-4 shadow-lg";
+            
+            userNav.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <div class="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse"></div>
+                    <span class="text-sm text-gray-300">
+                        Connecté en tant que <strong class="text-white">${state.user.email}</strong>
+                    </span>
+                </div>
+                <div class="flex gap-2">
+                    <button id="logoutBtn" class="bg-gray-700 hover:bg-red-600 text-white text-xs font-semibold py-2 px-4 rounded-lg transition duration-200">
+                        Déconnexion
+                    </button>
+                </div>
+            `;
+            userNav.querySelector('#logoutBtn').addEventListener('click', handleLogout);
+            appRoot.appendChild(userNav);
+
+            const { selectedMedia, error, movies, isLoading, isImporting, selectedGenre, availableGenres, isCollectionView, isYearView, selectedCollection, selectedYear, availableYears, searchTerm } = state;
+
+            // --- Vue de Sélection du Média ---
+            if (selectedMedia === null) {
+                const initialView = document.createElement('div');
+                initialView.className = "py-12 flex flex-col items-center justify-center";
+                initialView.innerHTML = `
+                    <h1 class="text-4xl font-extrabold text-white mb-4 text-center">Médiathèque Cloud</h1>
+                    <p class="text-xl text-gray-400 mb-8 text-center max-w-xl">Sélectionnez le type de média pour charger votre collection stockée de manière sécurisée.</p>
+                `;
+                initialView.appendChild(MediaSelector());
+                appRoot.appendChild(initialView);
+                return;
+            }
+
+            // --- En-tête Médias Actif ---
+            const mediaHeader = document.createElement('div');
+            mediaHeader.className = "mb-6 text-center";
+            mediaHeader.innerHTML = `<h1 class="text-3xl font-bold text-white mb-2">Gestion : ${selectedMedia}</h1>`;
+            appRoot.appendChild(mediaHeader);
+            appRoot.appendChild(MediaSelector());
+
+            // --- CD (En cours de développement) ---
+            if (selectedMedia === 'CD') {
+                const devMessage = document.createElement('div');
+                devMessage.className = "text-center p-20 bg-gray-800 border border-gray-700 rounded-xl text-gray-400";
+                devMessage.innerHTML = `<p class="text-2xl font-medium">L'onglet **${selectedMedia}** est en cours de développement !</p>`;
+                
+                const backButton = document.createElement('button');
+                backButton.textContent = 'Changer de média';
+                backButton.className = "mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-full transition duration-200 shadow-md";
+                backButton.addEventListener('click', () => setState({ selectedMedia: null }));
+
+                devMessage.appendChild(backButton);
+                appRoot.appendChild(devMessage);
+                return;
+            }
+
+            // --- DVD ou BD ---
+            if (selectedMedia === 'DVD' || selectedMedia === 'BD') {
+                const mediaTitle = selectedMedia === 'DVD' ? 'Films' : 'Bandes Dessinées';
+                const searchPlaceholder = selectedMedia === 'DVD' 
+                    ? 'Rechercher par titre, réalisateur, acteur ou synopsis...' 
+                    : 'Rechercher par titre, auteur, dessinateur ou synopsis...';
+                
+                const controlsDiv = document.createElement('div');
+                controlsDiv.className = "flex flex-col gap-4 mb-6 p-4 bg-gray-800 border border-gray-700 rounded-xl shadow-inner";
+                
+                // Ligne 1 : Importation et Affichage du Compte de films
+                const topControls = document.createElement('div');
+                topControls.className = "flex flex-col sm:flex-row justify-between items-center gap-4";
+                
+                topControls.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-xl font-medium text-gray-300">
+                            ${mediaTitle} synchronisé(e)s : <span class="text-blue-400 font-bold">${movies.length}</span>
+                        </h2>
+                        ${isLoading ? '<div class="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500"></div>' : ''}
+                    </div>
+                    
+                    <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+                        <input 
+                            type="file" 
+                            accept=".csv" 
+                            id="fileUploadInput"
+                            class="hidden" 
+                            ${isImporting ? 'disabled' : ''}
+                        />
+                        <span class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-5 rounded-full transition duration-200 shadow-md flex items-center gap-2">
+                            ${isImporting ? 'Mise à jour Cloud...' : 'Importer CSV & Sauvegarder'}
+                        </span>
+                    </label>
+                `;
+                controlsDiv.appendChild(topControls);
+                
+                // Ligne 2 : Recherche et Boutons de Vue (uniquement si des films sont chargés)
+                if (movies.length > 0) {
+                    const viewControls = document.createElement('div');
+                    viewControls.className = "flex flex-col md:flex-row items-center justify-between gap-4 pt-4 border-t border-gray-700";
+                    
+                    const searchWrapper = document.createElement('div');
+                    searchWrapper.className = "relative w-full md:w-1/2";
+                    searchWrapper.innerHTML = `
+                        <input
+                            type="text"
+                            id="searchTermInput"
+                            placeholder="${searchPlaceholder}"
+                            value="${state.searchTerm}"
+                            class="w-full bg-gray-700 text-white py-2.5 pl-10 pr-4 rounded-full focus:ring-2 focus:ring-blue-500 border-transparent transition"
+                            ${isCollectionView || isYearView ? 'disabled' : ''}
+                        />
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    `;
+                    viewControls.appendChild(searchWrapper);
+                    
+                    const buttonGroup = document.createElement('div');
+                    buttonGroup.className = "flex space-x-2 flex-shrink-0 w-full md:w-auto justify-end";
+                    
+                    const createToggleButton = (text, isSelected) => {
+                        const button = document.createElement('button');
+                        button.textContent = text;
+                        button.className = `px-4 py-2 text-sm rounded-full font-semibold transition-all duration-200 shadow-md ${
+                            isSelected 
+                                ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`;
+                        return button;
+                    };
+                    
+                    // Bouton Collections (Uniquement pour DVD)
+                    if (selectedMedia === 'DVD') {
+                        const collectionToggle = createToggleButton('Collections', isCollectionView);
+                        collectionToggle.addEventListener('click', () => setState({ 
+                            isCollectionView: !isCollectionView,
+                            isYearView: false,
+                            selectedCollection: null, 
+                            searchTerm: '', 
+                            selectedGenre: 'Tous'
+                        }));
+                        buttonGroup.appendChild(collectionToggle);
+                    }
+                    
+                    // Bouton Par Années
+                    const yearToggle = createToggleButton('Par Années', isYearView);
+                    yearToggle.addEventListener('click', () => {
+                        const newYearView = !isYearView;
+                        const defaultYear = availableYears.length > 0 ? availableYears[0] : null;
+                        
+                        setState({ 
+                            isYearView: newYearView,
+                            isCollectionView: false,
+                            selectedCollection: null,
+                            searchTerm: newYearView ? '' : searchTerm,
+                            selectedGenre: newYearView ? 'Tous' : selectedGenre,
+                            selectedYear: newYearView ? defaultYear : null
+                        });
+                    });
+                    buttonGroup.appendChild(yearToggle);
+
+                    // Bouton Vue Standard
+                    const standardIsActive = !isCollectionView && !isYearView;
+                    const standardToggle = createToggleButton('Vue Standard', standardIsActive);
+                    standardToggle.addEventListener('click', () => setState({
+                        isCollectionView: false,
+                        isYearView: false,
+                        selectedCollection: null,
+                        selectedYear: null
+                    }));
+                    buttonGroup.prepend(standardToggle);
+                    
+                    viewControls.appendChild(buttonGroup);
+                    controlsDiv.appendChild(viewControls);
+                }
+
+                appRoot.appendChild(controlsDiv);
+
+                // Ajout des écouteurs
+                controlsDiv.querySelector('#fileUploadInput').addEventListener('change', handleFileUpload);
+                const searchInput = controlsDiv.querySelector('#searchTermInput');
+                if (searchInput) {
+                    searchInput.addEventListener('input', (e) => !(isCollectionView || isYearView) && setState({ searchTerm: e.target.value }));
+                }
+
+                if (error) {
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = "bg-red-900 border border-red-500 text-red-200 p-4 rounded-lg shadow-md mb-6 max-w-4xl mx-auto space-y-2";
+                    errorDiv.innerHTML = `
+                        <p class="font-bold flex items-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                            Erreur de Synchronisation Firebase :
+                        </p>
+                        <p class="text-sm bg-black/30 p-2.5 rounded font-mono break-all">${error}</p>
+                    `;
+                    appRoot.appendChild(errorDiv);
+                }
+                
+                // --- Affichage du contenu si vide ---
+                if (movies.length === 0 && !isLoading && !isImporting) {
+                    const emptyCatalogDiv = document.createElement('div');
+                    emptyCatalogDiv.className = "text-center p-8 bg-gray-800/40 border border-gray-850 rounded-xl text-gray-500 max-w-4xl mx-auto space-y-6";
+                    
+                    // Boîte de dialogue d'aide au diagnostic pour guider l'utilisateur pas à pas
+                    const diagnosticDiv = document.createElement('div');
+                    diagnosticDiv.className = "bg-gray-850/90 border border-blue-500/30 p-6 rounded-xl text-left space-y-4 shadow-2xl";
+                    diagnosticDiv.innerHTML = `
+                        <div class="flex items-center gap-2 text-blue-400 font-bold text-base">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>Aide au Diagnostic Cloud (Médiathèque)</span>
+                        </div>
+                        <p class="text-gray-300 leading-relaxed text-sm">
+                            Si vous avez importé des données auparavant et qu'elles n'apparaissent pas, veuillez vérifier les points de diagnostic suivants :
+                        </p>
+                        <ol class="list-decimal pl-5 space-y-3 text-sm text-gray-400">
+                            <li>
+                                <strong class="text-gray-200">Vérifiez vos Règles Firestore Database :</strong> 
+                                Vos requêtes d'accès sont peut-être bloquées. Ouvrez votre <a href="https://console.firebase.google.com/" target="_blank" class="text-blue-400 hover:underline font-semibold">Console Firebase</a> &gt; Firestore &gt; Règles (Rules), et publiez ceci :
+                                <pre class="bg-gray-950 text-green-400 p-3 rounded-lg mt-2 text-xs overflow-x-auto border border-gray-700 font-mono select-all">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /artifacts/{appId}/users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}</pre>
+                            </li>
+                            <li>
+                                <strong class="text-gray-200 font-semibold">Identifiant de session actif :</strong>
+                                Vous êtes connecté avec le compte suivant. Les médias sont enregistrés spécifiquement sous cet ID :
+                                <div class="mt-2 flex flex-col gap-1 bg-gray-950 p-2.5 rounded border border-gray-700 font-mono text-xs">
+                                    <div>Email : <span class="text-white">${state.user.email}</span></div>
+                                    <div>UID Firestore : <span class="text-yellow-400 select-all break-all">${state.user.uid}</span></div>
+                                </div>
+                            </li>
+                            <li>
+                                <strong class="text-gray-200 font-semibold">Importation manuelle de départ :</strong>
+                                Si c'est votre première connexion sous cet email, glissez-déposez ou importez votre fichier CSV en cliquant sur <strong class="text-gray-200">"Importer CSV & Sauvegarder"</strong> ci-dessus pour peupler et lier définitivement les films à ce compte.
+                            </li>
+                        </ol>
+                    `;
+
+                    emptyCatalogDiv.appendChild(diagnosticDiv);
+                    appRoot.appendChild(emptyCatalogDiv);
+                    return;
+                }
+                
+                // --- VUE PAR ANNÉES ---
+                if (isYearView) {
+                    if (availableYears.length === 0) {
+                        const noYears = document.createElement('div');
+                        noYears.className = "text-center p-10 bg-gray-800 rounded-xl text-gray-500";
+                        noYears.textContent = "Aucune année de sortie valide trouvée.";
+                        appRoot.appendChild(noYears);
+                    } else {
+                        appRoot.appendChild(YearSlider());
+                        const filteredMovies = getFilteredMovies(movies);
+                        
+                        if (filteredMovies.length === 0) {
+                            const noResultsDiv = document.createElement('div');
+                            noResultsDiv.className = "text-center p-10 bg-gray-800 rounded-xl text-gray-500";
+                            noResultsDiv.innerHTML = `<p class="text-lg">Aucun film trouvé pour l'année ${selectedYear}.</p>`;
+                            appRoot.appendChild(noResultsDiv);
+                        } else {
+                             const gridDiv = document.createElement('div');
+                             gridDiv.className = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-4";
+                             filteredMovies.forEach(movie => {
+                                 gridDiv.appendChild(MovieCard(movie));
+                             });
+                             appRoot.appendChild(gridDiv);
+                        }
+                    }
+                } 
+                
+                // --- VUE COLLECTIONS ---
+                else if (selectedMedia === 'DVD' && isCollectionView) {
+                    if (selectedCollection) {
+                        const backHeader = document.createElement('div');
+                        backHeader.className = "flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-6";
+                        
+                        const backButton = document.createElement('button');
+                        backButton.textContent = '← Retour aux Collections';
+                        backButton.className = "bg-gray-800 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-full transition duration-200 border border-gray-700 shadow-md";
+                        backButton.addEventListener('click', () => setState({ selectedCollection: null }));
+                        backHeader.appendChild(backButton);
+                        
+                        const titleH2 = document.createElement('h2');
+                        titleH2.textContent = `Collection : ${selectedCollection.name}`;
+                        titleH2.className = "text-3xl font-bold text-white";
+                        backHeader.appendChild(titleH2);
+
+                        appRoot.appendChild(backHeader);
+                        
+                        const gridDiv = document.createElement('div');
+                        gridDiv.className = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-4";
+                        selectedCollection.movies.forEach(movie => {
+                            gridDiv.appendChild(MovieCard(movie));
+                        });
+                        appRoot.appendChild(gridDiv);
+                    } else {
+                        const { collections, individuals } = groupMoviesIntoCollections(movies);
+                        const collectionKeys = Object.keys(collections);
+                        
+                        if (collectionKeys.length > 0) {
+                            const collectionTitle = document.createElement('h2');
+                            collectionTitle.textContent = "Suites de Films (Collections)";
+                            collectionTitle.className = "text-2xl font-bold text-gray-300 mb-4";
+                            appRoot.appendChild(collectionTitle);
+
+                            const collectionGrid = document.createElement('div');
+                            collectionGrid.className = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-4 mb-10";
+                            collectionKeys.forEach(name => {
+                                collectionGrid.appendChild(CollectionCard(name, collections[name]));
+                            });
+                            appRoot.appendChild(collectionGrid);
+                        }
+                        
+                        if (individuals.length > 0) {
+                            if (collectionKeys.length > 0) {
+                                 const separator = document.createElement('h2');
+                                 separator.textContent = "Autres Films";
+                                 separator.className = "text-2xl font-bold text-gray-300 mt-6 mb-4";
+                                 appRoot.appendChild(separator);
+                            }
+                            
+                            const individualGrid = document.createElement('div');
+                            individualGrid.className = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-4";
+                            individuals
+                                .sort((a, b) => (a.title || "").localeCompare(b.title || ""))
+                                .forEach(movie => {
+                                    individualGrid.appendChild(MovieCard(movie));
+                                });
+                            appRoot.appendChild(individualGrid);
+                        }
+                    }
+                } 
+                
+                // --- VUE STANDARD (par défaut) ---
+                else {
+                    const filteredMovies = getFilteredMovies(movies);
+                    
+                    if (movies.length > 0) {
+                        const genreFilterDiv = document.createElement('div');
+                        genreFilterDiv.className = "mb-6 p-3 bg-gray-800 rounded-lg border border-gray-700 flex flex-wrap gap-2";
+                        genreFilterDiv.innerHTML = `<p class="text-sm font-semibold text-gray-400 self-center pr-2">Filtrer par Genre :</p>`;
+
+                        availableGenres.forEach(genre => {
+                            const button = document.createElement('button');
+                            button.textContent = genre;
+                            button.className = `px-4 py-1 text-sm rounded-full transition-colors duration-150 ${selectedGenre === genre ? 'bg-blue-600 text-white font-bold shadow-lg' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`;
+                            button.addEventListener('click', () => setState({ selectedGenre: genre }));
+                            genreFilterDiv.appendChild(button);
+                        });
+                        appRoot.appendChild(genreFilterDiv);
+                    }
+                    
+                    if (filteredMovies.length === 0) {
+                        const noResultsDiv = document.createElement('div');
+                        noResultsDiv.className = "text-center p-20 bg-gray-800 border border-gray-700 rounded-xl text-gray-500";
+                        noResultsDiv.innerHTML = `<p class="text-lg">Aucun élément ne correspond aux filtres.</p>`;
+                        appRoot.appendChild(noResultsDiv);
+                    } else {
+                        const gridDiv = document.createElement('div');
+                        gridDiv.className = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-4";
+                        filteredMovies.forEach(movie => {
+                            gridDiv.appendChild(MovieCard(movie));
+                        });
+                        appRoot.appendChild(gridDiv);
+                    }
+                }
+            }
+
+            // --- Toasts de Notifications ---
+            const toastEl = ToastComponent();
+            if (toastEl) {
+                document.body.appendChild(toastEl);
+            }
+
+            // --- Dialogue de Confirmation ---
+            const confirmModalEl = ConfirmModalComponent();
+            if (confirmModalEl) {
+                document.body.appendChild(confirmModalEl);
+            }
+
+            // --- Modale de Détails ---
+            const existingModal = document.getElementById('movieDetailModalOverlay');
+            if (existingModal) {
+                existingModal.remove();
+            }
+
+            const modalElement = MovieDetailModal();
+            if (modalElement) {
+                document.body.appendChild(modalElement);
+            }
+            
+            // --- Panneau de Diagnostic de synchronisation en bas de page ---
+            if (state.user) {
+                const diagPanel = document.createElement('div');
+                diagPanel.className = "mt-12 p-4 bg-gray-800 border-t border-gray-700 text-xs text-gray-400 w-full flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2";
+                diagPanel.innerHTML = `
+                    <div>
+                        <span class="font-bold text-gray-300 block mb-1">🔍 Diagnostic de Synchronisation Firestore :</span>
+                        <span class="block">Chemin d'écoute actif : <code class="text-blue-400 bg-black/40 px-1 py-0.5 rounded font-mono select-all">/artifacts/${appId}/users/${state.user.uid}/${state.selectedMedia || '[Aucun média sélectionné]'}</code></span>
+                    </div>
+                    <div class="text-right flex flex-col items-end">
+                        <span>Compte connecté : <strong class="text-white">${state.user.email}</strong></span>
+                        <span>ID Utilisateur : <code class="text-yellow-400 font-mono select-all">${state.user.uid}</code></span>
+                    </div>
+                `;
+                appRoot.appendChild(diagPanel);
+            }
+        }
+
+        // Lancement initial de l'application & authentification (Règle 3)
+        document.addEventListener('DOMContentLoaded', () => {
+            initAuthentication();
+            renderApp();
+        });
+    </script>
+</body>
+</html>
